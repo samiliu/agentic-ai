@@ -60,21 +60,28 @@ def main() -> None:
         "items": [item.to_dict() for item in items],
     }
     write_json(runtime_dir / "collected_raw.json", payload)
+    date_unknown = [item for item in items if item.raw_metadata.get("date_unknown")]
     write_json(runtime_dir / "collect_report.json", {
         "generated_at": utc_now_iso(),
         "item_count": len(items),
+        "date_unknown_count": len(date_unknown),
+        "date_unknown_ratio": round(len(date_unknown) / len(items), 3) if items else 0.0,
         "sources": reports,
     })
-    write_text(runtime_dir / "collect_report.md", _render_report(len(items), reports))
+    write_text(
+        runtime_dir / "collect_report.md",
+        _render_report(len(items), reports, date_unknown_count=len(date_unknown)),
+    )
     print(f"collected items={len(items)}")
     print(f"wrote {runtime_dir / 'collected_raw.json'}")
 
 
-def _render_report(item_count: int, reports: list[dict]) -> str:
+def _render_report(item_count: int, reports: list[dict], *, date_unknown_count: int = 0) -> str:
     lines = [
         "# Raw Collection Report",
         "",
         f"- total_items: {item_count}",
+        f"- date_unknown: {date_unknown_count}",
         "",
         "| source_id | source_type | status | item_count | note |",
         "| --- | --- | --- | ---: | --- |",

@@ -23,7 +23,11 @@ def collect_all(config: Dict[str, Any], *, root: Path) -> tuple[List[RawItem], L
         if not isinstance(source, dict) or not source.get("enabled", False):
             continue
         try:
-            fetched = _filter_recent_items(collect_fixed_source(source), lookback_days=lookback_days)
+            fetched = _filter_recent_items(
+                collect_fixed_source(source),
+                lookback_days=lookback_days,
+                source_id=compact_text(source.get("id")),
+            )
             reports.append(_report(source, "ok", len(fetched)))
             items.extend(fetched)
         except Exception as exc:
@@ -45,7 +49,9 @@ def collect_all(config: Dict[str, Any], *, root: Path) -> tuple[List[RawItem], L
         })
         fetched = read_tavily_results(results_path)
         if fetched:
-            fetched = _filter_recent_items(fetched, lookback_days=lookback_days)
+            fetched = _filter_recent_items(
+                fetched, lookback_days=lookback_days, source_id="tavily_search"
+            )
             reports.append({
                 "source_id": "tavily_search",
                 "source_type": "tavily_results",
@@ -93,17 +99,29 @@ def _lookback_days(config: Dict[str, Any]) -> int:
     return max(1, value)
 
 
-def _filter_recent_items(items: List[RawItem], *, lookback_days: int) -> List[RawItem]:
+def _filter_recent_items(
+    items: List[RawItem],
+    *,
+    lookback_days: int,
+    source_id: str = "",
+) -> List[RawItem]:
+    """三态处理：有日期且新 → 收；有日期且旧 → 丢；无日期 → 收但打 date_unknown 标记。
+
+    打标记是为了让下游（精排 prompt、dashboard、健康指标）能识别
+    "这条的日期不可信"，而不是把无日期条目和有日期新条目同等对待。
+    """
     cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
     filtered: List[RawItem] = []
     for item in items:
         published_at = compact_text(item.published_at)
         if not published_at:
+            item.raw_metadata["date_unknown"] = True
             filtered.append(item)
             continue
         try:
             parsed = datetime.fromisoformat(published_at)
         except ValueError:
+            item.raw_metadata["date_unknown"] = True
             filtered.append(item)
             continue
         if parsed.tzinfo is None:

@@ -27,6 +27,13 @@ PROMPT_TEXT = """你是 AI 早报编辑。
 2. 内容本身是否清楚、完整、像一条可以进入早报的新闻。
 3. 哪些内容更适合排在前面，哪些内容更适合作为后位补充。
 
+时效硬规则（优先级高于上面三条）：
+- 早报的承诺是"今天的新鲜资讯"。published_at 距今超过 7 天的条目，一律不要选进 Top10；
+  距今 3 到 7 天之间可以选，但必须排在所有 3 天内条目之后。
+- published_at 为空或带 date_unknown 标记的条目，说明发布时间无法确认，
+  只在 3 天内的条目凑不满 10 条时才允许使用，并且必须排在最后。
+- 不要因为某条旧文信息密度高、标题好看就破例。旧闻就是旧闻。
+
 不要猜测草稿之外的信息。
 如果不足 10 条，就按实际数量输出。
 优先按 rank_id 输出；如果实在不方便，也可以输出 item_id。不要只返回标题。
@@ -91,6 +98,7 @@ def _to_ranking_item(item: Dict[str, Any]) -> Dict[str, Any]:
         "source_type": str(item.get("source_type", "")).strip(),
         "source_name": str(item.get("source_name", "")).strip(),
         "published_at": str(item.get("published_at", "")).strip(),
+        "date_unknown": bool(item.get("date_unknown", False)),
         "url": str(item.get("url", "")).strip(),
     }
 

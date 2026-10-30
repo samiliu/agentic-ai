@@ -176,13 +176,9 @@ def _resolve_published_at(item: Dict[str, Any], *, raw_html: str) -> str:
 
     source_type = compact_text(item.get("source_type"))
     if source_type == "tavily_api":
-        inferred = _extract_published_at_from_html(raw_html)
-        if inferred:
-            return inferred
-        fetched_at = compact_text(item.get("fetched_at"))
-        if fetched_at:
-            return fetched_at
-        return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+        # 只信任页面里真实的发布时间标签。抓不到就留空，
+        # 绝不能用 fetched_at 冒充 —— 那会把旧闻伪装成今天的新闻。
+        return _extract_published_at_from_html(raw_html)
     return existing
 
 

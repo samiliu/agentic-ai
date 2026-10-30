@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import os
-from datetime import datetime, timedelta, timezone
 import json
 import logging
+import os
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -41,6 +42,7 @@ def write_tavily_plan(config: Dict[str, Any], path: Path) -> None:
                 "since_date": (now - timedelta(days=recency_days)).date().isoformat(),
                 "fallback_recency_days": fallback_days,
                 "fallback_since_date": (now - timedelta(days=fallback_days)).date().isoformat(),
+                "filter_by_published_date": bool(config.get("filter_by_published_date", True)),
             })
 
     write_json(path, {
@@ -53,6 +55,28 @@ def write_tavily_plan(config: Dict[str, Any], path: Path) -> None:
 
 
 TAVILY_API_URL = "https://api.tavily.com/search"
+
+
+def _normalize_published_date(value: str) -> str:
+    """Tavily 返回的是 RFC 2822（Wed, 28 Oct 2026 08:00:00 GMT），统一转成 ISO 8601。"""
+    text = compact_text(value)
+    if not text:
+        return ""
+    try:
+        parsed = parsedate_to_datetime(text)
+    except (TypeError, ValueError):
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return ""
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _query_end_date() -> str:
+    """上界取明天（UTC），避免因时区差把当天的结果切掉。"""
+    return (datetime.now(timezone.utc) + timedelta(days=1)).date().isoformat()
 
 
 def execute_tavily_plan(plan_path: Path, results_path: Path) -> int:
@@ -91,12 +115,22 @@ def execute_tavily_plan(plan_path: Path, results_path: Path) -> int:
             "query": query,
             "max_results": max_items,
             "search_depth": "basic",
+            # published_date 只在显式要求时返回（topic=news 才会自动带上）。
+            "include_published_date": True,
         }
         if domains:
             body["include_domains"] = domains
-        days = item.get("recency_days")
-        if days:
-            body["days"] = int(days)
+        # 旧代码用的是 Tavily 已废弃的 `days` 参数：它只在 topic=news 时生效，
+        # 且当前 API 已不接受该字段，会被静默忽略 —— 这就是旧闻混入的根因。
+        # 改用 start_date / end_date 做发布时间窗过滤（格式 YYYY-MM-DD）。
+        start_date = compact_text(item.get("since_date"))
+        if start_date:
+            body["start_date"] = start_date
+        end_date = _query_end_date()
+        if end_date:
+            body["end_date"] = end_date
+        if bool(item.get("filter_by_published_date", True)):
+            body["filter_by_published_date"] = True
 
         try:
             resp = requests.post(TAVILY_API_URL, json=body, timeout=30)
@@ -122,7 +156,7 @@ def execute_tavily_plan(plan_path: Path, results_path: Path) -> int:
                 "title": title,
                 "url": url,
                 "summary": compact_text(r.get("content")),
-                "published_at": compact_text(r.get("published_date")),
+                "published_at": _normalize_published_date(r.get("published_date")),
                 "fetched_at": utc_now_iso(),
             })
 
